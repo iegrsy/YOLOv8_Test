@@ -37,7 +37,7 @@ classes_filter = ["person"]
 __classes = [key for key, value in model.names.items()
              if value in classes_filter]
 
-opts = Opts(0.2, False, True, False)
+opts = Opts(0.2, True, False, False)
 sources = {
     1: "rtsp://192.168.1.128:8554/cam",
     2: "video5000_640.h264",
@@ -45,9 +45,10 @@ sources = {
     4: "test4.h264",
     5: "tokyo.mp4",
     6: "trucks.mp4",
+    7: "aoe.mp4",
 }
 
-source = sources.get(3)
+source = sources.get(7)
 cap = cv2.VideoCapture(source)
 
 frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
