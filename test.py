@@ -45,6 +45,7 @@ sources = {
     4: "test4.h264",
     5: "tokyo.mp4",
     6: "trucks.mp4",
+    7: "aoe.mp4",
 }
 
 source = sources.get(3)
