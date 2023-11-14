@@ -27,4 +27,4 @@ jobs:
 
     - name: Build scripts
       run: |
-        python test.py
+        python -m py_compile test.py
