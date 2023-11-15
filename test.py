@@ -1,5 +1,7 @@
 import cv2
 import time
+import uuid
+import os
 from ultralytics import YOLO, checks
 
 
@@ -8,11 +10,12 @@ def current_milli_time():
 
 
 class Opts:
-    def __init__(self, conf, verbose, showpreview, withtrack):
+    def __init__(self, conf=0.2, verbose=False, showpreview=False, withtrack=False, export=False):
         self.conf = conf
         self.verbose = verbose
         self.showpreview = showpreview
         self.withtrack = withtrack
+        self.export = export
 
 
 class ObjModel:
@@ -29,7 +32,8 @@ class ObjModel:
 # Print check
 checks()
 
-model = YOLO('yolov8s.pt')
+model = YOLO('yolov8m.pt')
+model_cls = YOLO('yolov8m-cls.pt')
 print(f"{model.info()}")
 # model.to("cpu")
 
@@ -37,7 +41,7 @@ classes_filter = ["person"]
 __classes = [key for key, value in model.names.items()
              if value in classes_filter]
 
-opts = Opts(0.2, True, False, False)
+opts = Opts(verbose=False, export=True)
 sources = {
     1: "rtsp://192.168.1.128:8554/cam",
     2: "video5000_640.h264",
@@ -56,7 +60,8 @@ frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 print(
     f"Test video name: '{source}', resolution: [{frame_width} x {frame_height}]")
 
-start_time = current_milli_time()
+start_process_time = current_milli_time()
+process_total = 0
 frame_count = 1
 
 try:
@@ -65,19 +70,41 @@ try:
         if not ret:
             break
 
+        start_time = current_milli_time()
         frame_count = frame_count + 1
 
         if opts.withtrack:
             detections = model.track(
                 frame, persist=True, conf=opts.conf, verbose=opts.verbose, classes=__classes)
         else:
-            detections = model(frame, conf=opts.conf,
-                               verbose=opts.verbose, classes=__classes)
-            if opts.verbose:
-                for detection in detections[0].boxes:
-                    o = ObjModel(detection.cls.item(), model.names[detection.cls.item()],
-                                 detection.conf.item(), detection.xyxyn.tolist()[0])
+            detections = model.predict(frame, conf=opts.conf,
+                                       verbose=opts.verbose, classes=__classes)
+            for detection in detections[0].boxes:
+                o = ObjModel(detection.cls.item(), model.names[detection.cls.item()],
+                             detection.conf.item(), detection.xyxyn.tolist()[0])
+
+                if opts.verbose:
                     print(f"obj: {o}")
+
+                if opts.export:
+                    x1, y1, x2, y2 = detection.xyxy.tolist()[0]
+                    cropped_image = frame[int(y1):int(y2), int(x1):int(x2)]
+
+                    # TODO: use custom cls
+                    # obj_cls = model_cls.predict(cropped_image, conf=opts.conf, verbose=opts.verbose, classes=__classes)
+                    # print(f"[{obj_cls[0].probs.top1}] {obj_cls[0].names[obj_cls[0].probs.top1]}")
+
+                    ffolder = os.path.join(f"build", f"{o.name}")
+                    if not os.path.exists(ffolder):
+                        os.makedirs(ffolder)
+                    fname = os.path.join(ffolder, f"{uuid.uuid4()}_{current_milli_time()}.jpg")
+                    cv2.imwrite(fname, cropped_image)
+                    if opts.verbose:
+                        print(f"export file: {fname}")
+
+        end_time = current_milli_time()
+        ellapse_time = end_time-start_time
+        process_total = process_total + ellapse_time
 
         if opts.showpreview:
             frame = detections[0].plot()
@@ -86,17 +113,17 @@ try:
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
-        # if frame_count > 2500:
+        # if frame_count > 5:
         #     break
-
+except Exception as e:
+    print(f"Error: {e}")
 except KeyboardInterrupt:
     pass
 
-end_time = current_milli_time()
-ellapse_time = end_time-start_time
-cycle_avg_time = ellapse_time/frame_count
+end_process_time = current_milli_time()
+cycle_avg_time = process_total/frame_count
 process_fps = 1000.0/cycle_avg_time
-print(f"[{start_time}, {end_time}] Processed frame count: {frame_count}, Ellapse time: {ellapse_time} ms, AVG process cycle time: {cycle_avg_time} ms, Process FPS: {process_fps}")
+print(f"[{start_process_time}, {end_process_time}] Processed frame count: {frame_count}, Ellapse time: {end_process_time-start_process_time} ms, AVG process cycle time: {cycle_avg_time} ms, Process FPS: {process_fps}")
 
 cap.release()
 cv2.destroyAllWindows()
