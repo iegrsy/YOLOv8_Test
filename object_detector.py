@@ -1,140 +1,238 @@
+import argparse
+import threading
 import cv2
 import time
 import uuid
 import os
+import msvcrt
 from ultralytics import YOLO, checks
+
+# Check for Ultralytics installation and configurations
+checks()
 
 
 def current_milli_time():
     return round(time.time() * 1000)
 
 
-class Opts:
-    def __init__(self, conf=0.2, verbose=False, showpreview=False, withtrack=False, export=False):
-        self.conf = conf
-        self.verbose = verbose
-        self.showpreview = showpreview
-        self.withtrack = withtrack
-        self.export = export
-
-
-class ObjModel:
-    def __init__(self, oid, name, conf, point):
-        self.oid = oid
-        self.name = name
-        self.conf = conf
+class DetectedObject:
+    def __init__(self, track_id, object_id, object_name, class_id, class_name, confidence, point, pointn):
+        self.track_id = track_id
+        self.object_id = object_id
+        self.object_name = object_name
+        self.class_id = class_id
+        self.class_name = class_name
+        self.confidence = confidence
         self.point = point
+        self.pointn = pointn
 
     def __str__(self) -> str:
-        return f"[{self.oid}, {self.name}] c: {self.conf}, p: {self.point}"
+        return f"[{self.object_id}, {self.object_name}] [{self.class_id}, {self.class_name}] c: {self.confidence}, p: {self.point}"
 
 
-# Print check
-checks()
+class ObjectDetector:
+    """
+    ObjectDetector class for detecting and processing objects in frames.
 
-model = YOLO('yolov8m.pt')
-model_cls = YOLO('yolov8m-cls.pt')
-print(f"{model.info()}")
-# model.to("cpu")
+    Args:
+    - detection_confidence: Confidence threshold for object detection.
+    - classification_confidence: Confidence threshold for object classification.
+    - verbose: Flag for verbose output.
+    - show_preview: Flag to display real-time frame previews.
+    - with_track: Flag for object tracking.
+    - export: Flag to enable export of cropped images.
+    - split_for_classes: Flag to split exported images into folders based on classes.
+    """
+    def max_value_key(dictionary):
+        return max(dictionary, key=lambda k: dictionary[k])
 
-classes_filter = ["person"]
-__classes = [key for key, value in model.names.items()
-             if value in classes_filter]
+    def __init__(self, detection_confidence=0.4, classification_confidence=0.7,
+                 verbose=False, show_preview=False, with_track=False, export=False,
+                 split_for_classes=True):
+        """
+        Initializes the ObjectDetector class with default parameters and models.
+        """
+        self.detection_confidence = detection_confidence
+        self.classification_confidence = classification_confidence
+        self.verbose = verbose
+        self.show_preview = show_preview
+        self.with_track = with_track
+        self.export = export
+        self.split_for_classes = split_for_classes
+        self.model_yolo = YOLO('yolov8m.pt')
+        self.model_cls_yolo = YOLO('vest-cls.pt')
+        self.classes_filter = ["person"]
+        self.colors = {0: (0, 0, 255), 1: (0, 255, 0)}
+        self.selected_classes = [key for key, value in self.model_yolo.names.items(
+        ) if value in self.classes_filter]
 
-opts = Opts(verbose=False, export=True)
-sources = {
-    1: "rtsp://192.168.1.128:8554/cam",
-    2: "video5000_640.h264",
-    3: "video5000.h264",
-    4: "test4.h264",
-    5: "tokyo.mp4",
-    6: "trucks.mp4",
-    7: "aoe.mp4",
-}
+    def detect_objects(self, frame):
+        """
+        Detects objects in a frame and performs classification and tracking if enabled.
 
-source = sources.get(7)
-cap = cv2.VideoCapture(source)
+        Args:
+        - frame: Input frame for object detection.
 
-frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-print(
-    f"Test video name: '{source}', resolution: [{frame_width} x {frame_height}]")
-
-start_process_time = current_milli_time()
-process_total = 0
-frame_count = 1
-
-try:
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        start_time = current_milli_time()
-        frame_count = frame_count + 1
-
-        if opts.withtrack:
-            detections = model.track(
-                frame, persist=True, conf=opts.conf, verbose=opts.verbose, classes=__classes)
+        Returns:
+        - List of DetectedObject instances representing the detected objects.
+        """
+        if self.with_track:
+            detections = self.model_yolo.track(
+                frame, persist=True, conf=self.detection_confidence, verbose=self.verbose, classes=self.selected_classes)
         else:
-            detections = model.predict(frame, conf=opts.conf,
-                                       verbose=opts.verbose, classes=__classes)
-            for detection in detections[0].boxes:
-                o = ObjModel(detection.cls.item(), model.names[detection.cls.item()],
-                             detection.conf.item(), detection.xyxyn.tolist()[0])
+            detections = self.model_yolo.predict(
+                frame, conf=self.detection_confidence, verbose=self.verbose, classes=self.selected_classes)
 
-                if opts.verbose:
-                    print(f"obj: {o}")
+        detect_objects = []
+        for detection in detections[0].boxes:
+            x1, y1, x2, y2 = detection.xyxy.tolist()[0]
+            cropped_image = frame[int(y1):int(y2), int(x1):int(x2)]
+            obj_cls = self.model_cls_yolo.predict(
+                cropped_image, conf=self.classification_confidence, verbose=self.verbose)
+            if detection.id is not None:
+                track_id = detection.id[0].item()
+            else:
+                track_id = uuid.uuid4()
+            class_id = obj_cls[0].probs.top1
+            class_name = obj_cls[0].names[class_id]
+            obj = DetectedObject(track_id, detection.cls.item(), self.model_yolo.names[detection.cls.item()],
+                                 class_id, class_name, detection.conf.item(),
+                                 detection.xyxy.tolist()[0], detection.xyxyn.tolist()[0])
+            detect_objects.append(obj)
+            for obj in detect_objects:
+                if self.show_preview:
+                    self.draw_box(frame, obj)
+                    cv2.imshow('Frame', frame)
+                    cv2.waitKey(1)
+                if self.export:
+                    self.export_cropped_image(frame, obj, cropped_image)
 
-                if opts.export:
-                    x1, y1, x2, y2 = detection.xyxy.tolist()[0]
-                    cropped_image = frame[int(y1):int(y2), int(x1):int(x2)]
+        return detect_objects
 
-                    obj_cls = model_cls.predict(
-                        cropped_image, conf=opts.conf, verbose=opts.verbose, classes=__classes)
-                    clsid = obj_cls[0].probs.top1
-                    box_label = obj_cls[0].names[clsid]
-                    print(f"[{clsid}] {box_label}")
+    def draw_box(self, frame, detected_object):
+        """
+        Draws a bounding box around the detected object on the frame.
 
-                    if opts.showpreview:
-                        color = (0, 255, 0)
-                        if clsid == 0:
-                            color = (0, 0, 255)
+        Args:
+        - frame: Input frame to draw the bounding box.
+        - detected_object: DetectedObject instance representing the object to be drawn.
+        """
+        x1, y1, x2, y2 = detected_object.point
+        color = self.colors[detected_object.class_id]
+        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+        cv2.putText(frame, f"[{detected_object.track_id}] {detected_object.class_name}", (int(x1), int(y1) - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-                        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-                        cv2.putText(frame, box_label, (int(x1), int(y1) - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+    def export_cropped_image(self, frame, detected_object, cropped_image):
+        """
+        Exports the cropped image of the detected object to a specified folder.
 
-                    ffolder = os.path.join(f"build", f"{o.name}")
-                    if not os.path.exists(ffolder):
-                        os.makedirs(ffolder)
-                    fname = os.path.join(ffolder, f"{uuid.uuid4()}_{current_milli_time()}.jpg")
-                    cv2.imwrite(fname, cropped_image)
-                    if opts.verbose:
-                        print(f"export file: {fname}")
+        Args:
+        - frame: Original frame containing the detected object.
+        - detected_object: DetectedObject instance representing the object to be exported.
+        - cropped_image: Cropped image of the detected object.
+        """
+        folder = os.path.join(f"build", f"{detected_object.object_name}")
+        if self.split_for_classes:
+            folder = os.path.join(f"{folder}", f"{detected_object.class_name}")
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+        file_name = os.path.join(
+            folder, f"{current_milli_time()}_{uuid.uuid4()}.jpg")
+        cv2.imwrite(file_name, cropped_image)
+        if self.verbose:
+            print(f"export file: {file_name}")
 
-        end_time = current_milli_time()
-        ellapse_time = end_time-start_time
-        process_total = process_total + ellapse_time
 
-        if opts.showpreview:
-            # frame = detections[0].plot()
-            cv2.imshow('Frame', frame)
+class VideoSource:
+    def __init__(self, video_source, skip_frame_count=1):
+        """
+        Initializes the VideoSource class.
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+        Args:
+        - video_source: The path or index of the video source (file or camera index).
+        - skip_frame_count: The number of frames to skip between processed frames.
+        """
+        self.video_source = video_source
+        self.skip_frame_count = skip_frame_count
+        self.video_capture = cv2.VideoCapture(self.video_source)
+        self.frame_width = int(
+            self.video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.frame_height = int(
+            self.video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        print(
+            f"Test video name: '{self.video_source}', resolution: [{self.frame_width} x {self.frame_height}]")
+        self.player_thread = threading.Thread(target=self._get_frame)
+
+    def start(self, on_frame_callback):
+        """
+        Starts the video source, enabling the retrieval of frames.
+
+        Args:
+        - on_frame_callback: A function to handle each retrieved frame.
+        """
+        self._is_running = True
+        self.on_frame_callback = on_frame_callback
+        self.player_thread.start()
+
+    def stop(self):
+        """
+        Stops the video source and releases the video capture resources.
+        """
+        if not self._is_running:
+            return
+        self._is_running = False
+        self.video_capture.release()
+
+    def _get_frame(self):
+        """
+        Internal method to retrieve frames from the video source.
+        """
+        frame_index = 0
+        while self.video_capture.isOpened():
+            ret, frame = self.video_capture.read()
+            if not ret:
+                break
+            frame_index += 1
+            if frame_index % self.skip_frame_count != 0:
+                continue
+            if not self._is_running:
                 break
 
-        # if frame_count > 5:
-        #     break
-except Exception as e:
-    print(f"Error: {e}")
-except KeyboardInterrupt:
-    pass
+            if self.on_frame_callback is not None:
+                self.on_frame_callback(frame)
 
-end_process_time = current_milli_time()
-cycle_avg_time = process_total/frame_count
-process_fps = 1000.0/cycle_avg_time
-print(f"[{start_process_time}, {end_process_time}] Processed frame count: {frame_count}, Ellapse time: {end_process_time-start_process_time} ms, AVG process cycle time: {cycle_avg_time} ms, Process FPS: {process_fps}")
 
-cap.release()
-cv2.destroyAllWindows()
+if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Video processing application')
+    parser.add_argument('-s', '--video_source', default='aoe.mp4', help='File name or path of the video source')
+    parser.add_argument('-e', '--export', default=False, help='Option to export the processed video (True/False)')
+    parser.add_argument('-p', '--preview', default=False, help='Option to enable preview mode (True/False)')
+    parser.add_argument('--skip_frame_count', default=1, help='Number of frames to skip')
+    args = parser.parse_args()
+
+    try:
+        # Initialize ObjectDetector instance
+        object_detector = ObjectDetector(
+            with_track=True, show_preview=args.preview, export=args.export)
+
+        # Define the frame processing callback function
+        def on_frame(frame):
+            object_detector.detect_objects(frame)
+
+        # Initialize VideoSource instance with specified video source and skip frame count
+        video_source = VideoSource(args.video_source, args.skip_frame_count)
+        video_source.start(on_frame)
+
+        # Wait for any key press to exit the loop
+        while True:
+            print("============> waiting for any key to exit <============")
+            key = msvcrt.getch()
+            if key is not None:
+                break
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        # Stop the video source capture
+        video_source.stop()
