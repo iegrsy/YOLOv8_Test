@@ -4,7 +4,6 @@ import cv2
 import time
 import uuid
 import os
-import msvcrt
 from ultralytics import YOLO, checks
 
 # Check for Ultralytics installation and configurations
@@ -184,6 +183,9 @@ class VideoSource:
         self._is_running = False
         self.video_capture.release()
 
+    def is_running(self):
+        return self._is_running
+
     def _get_frame(self):
         """
         Internal method to retrieve frames from the video source.
@@ -201,6 +203,8 @@ class VideoSource:
 
             if self.on_frame_callback is not None:
                 self.on_frame_callback(frame)
+
+        self._is_running = False
 
 
 if __name__ == "__main__":
@@ -222,15 +226,15 @@ if __name__ == "__main__":
             object_detector.detect_objects(frame)
 
         # Initialize VideoSource instance with specified video source and skip frame count
-        video_source = VideoSource(args.video_source, args.skip_frame_count)
+        video_source = VideoSource(args.video_source, int(args.skip_frame_count))
         video_source.start(on_frame)
 
-        # Wait for any key press to exit the loop
-        while True:
-            print("============> waiting for any key to exit <============")
-            key = msvcrt.getch()
-            if key is not None:
-                break
+        # Wait for cancel to exit the loop
+        try:
+            while video_source.is_running():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
     except Exception as e:
         print(f"Error: {e}")
     finally:

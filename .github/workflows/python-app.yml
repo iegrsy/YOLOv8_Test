@@ -31,4 +31,4 @@ jobs:
 
     - name: Run test scripts
       run: |
-        python object_detector.py
+        python object_detector.py --skip_frame_count 100
