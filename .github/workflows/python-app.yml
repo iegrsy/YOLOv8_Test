@@ -31,4 +31,4 @@ jobs:
 
     - name: Run test scripts
       run: |
-        python test.py
+        python object_detector.py
