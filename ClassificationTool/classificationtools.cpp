@@ -5,11 +5,6 @@
 #include <QPushButton>
 #include <QDebug>
 
-#include <iostream>
-#include <filesystem>
-#include <string>
-#include <vector>
-
 #include <QFileDialog>
 #include <QImageReader>
 #include <QWidget>

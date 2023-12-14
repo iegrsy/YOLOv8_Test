@@ -5,9 +5,6 @@
 #include <QFileInfoList>
 #include <QLabel>
 
-#include <stdio.h>
-#include <dirent.h>
-
 #include <qfiledialog.h>
 
 QT_BEGIN_NAMESPACE
