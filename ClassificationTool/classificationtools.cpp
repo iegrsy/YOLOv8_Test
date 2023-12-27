@@ -12,41 +12,47 @@
 #include <QKeySequence>
 #include <QShortcut>
 
+#include <QFile>
+#include <QDir>
+#include <QFileInfo>
+#include <QMessageBox>
+
 ClassificationTools::ClassificationTools(QWidget *parent)
 	: QMainWindow(parent)
 	, ui(new Ui::ClassificationTools)
 {
 	ui->setupUi(this);
 
-	 QObject::connect(ui->selectFolder1Btn, &QPushButton::clicked, this, &ClassificationTools::onClickSelectFolder1);
-	 QObject::connect(ui->selectFolder2Btn, &QPushButton::clicked, this, &ClassificationTools::onClickSelectFolder2);
+	QObject::connect(ui->selectFolder1Btn, &QPushButton::clicked, this, &ClassificationTools::onClickSelectFolder1);
+	QObject::connect(ui->selectFolder2Btn, &QPushButton::clicked, this, &ClassificationTools::onClickSelectFolder2);
 
-	 QObject::connect(ui->filePath1, &QLineEdit::textChanged, this, &ClassificationTools::listFolderPaths1);
-	 QObject::connect(ui->filePath2, &QLineEdit::textChanged, this, &ClassificationTools::listFolderPaths2);
-
-	 QObject::connect(ui->folder1ActionBtn, &QPushButton::clicked, this, [&](){
+	QObject::connect(ui->filePath1, &QLineEdit::textChanged, this, &ClassificationTools::listFolderPaths1);
+	QObject::connect(ui->filePath2, &QLineEdit::textChanged, this, &ClassificationTools::listFolderPaths2);
+	QObject::connect(ui->folder1ActionBtn, &QPushButton::clicked, this, [&](){
 		this->currentIndex = 0;
 		this->activeFolderInfoList = &this->folder1InfoList;
+		this->moveTargetDir = ui->filePath2->text();
 		ui->frame_1->setStyleSheet("QFrame#frame_1 {border: 1px solid #0000FF}");
 		ui->frame_2->setStyleSheet("");
-	 });
-	 QObject::connect(ui->folder2ActionBtn, &QPushButton::clicked, this, [&](){
+	});
+	QObject::connect(ui->folder2ActionBtn, &QPushButton::clicked, this, [&](){
 		this->currentIndex = 0;
 		this->activeFolderInfoList = &this->folder2InfoList;
+		this->moveTargetDir = ui->filePath1->text();
 		ui->frame_1->setStyleSheet("");
 		ui->frame_2->setStyleSheet("QFrame#frame_2 {border: 1px solid #0000FF}");
-	 });
+	});
 
-	 ui->filePath1->setFocusPolicy(Qt::FocusPolicy::NoFocus);
-	 ui->filePath2->setFocusPolicy(Qt::FocusPolicy::NoFocus);
-	 ui->selectFolder1Btn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
-	 ui->selectFolder2Btn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
-	 ui->folder1ActionBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
-	 ui->folder2ActionBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
-	 ui->previousBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
-	 ui->moveBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
-	 ui->nextBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
-	 ui->undoBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+	ui->filePath1->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+	ui->filePath2->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+	ui->selectFolder1Btn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+	ui->selectFolder2Btn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+	ui->folder1ActionBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+	ui->folder2ActionBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+	ui->previousBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+	ui->moveBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+	ui->nextBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
+	ui->undoBtn->setFocusPolicy(Qt::FocusPolicy::NoFocus);
 
 	QShortcut *shortcutNext = new QShortcut(QKeySequence(Qt::Key_Right), this);
 	QObject::connect(shortcutNext, &QShortcut::activated, this, &ClassificationTools::onNextPressed);
@@ -57,10 +63,19 @@ ClassificationTools::ClassificationTools(QWidget *parent)
 	QShortcut *shortcutUndo = new QShortcut(QKeySequence(Qt::Key_Backspace), this);
 	QObject::connect(shortcutUndo, &QShortcut::activated, this, &ClassificationTools::onUndoPressed);
 
-	 QObject::connect(ui->nextBtn, &QPushButton::pressed, this, &ClassificationTools::onNextPressed);
-	 QObject::connect(ui->previousBtn, &QPushButton::pressed, this, &ClassificationTools::onNextPressed);
-	 QObject::connect(ui->moveBtn, &QPushButton::pressed, this, &ClassificationTools::onNextPressed);
-	 QObject::connect(ui->undoBtn, &QPushButton::pressed, this, &ClassificationTools::onUndoPressed);
+	QObject::connect(ui->nextBtn, &QPushButton::pressed, this, &ClassificationTools::onNextPressed);
+	QObject::connect(ui->previousBtn, &QPushButton::pressed, this, &ClassificationTools::onPreviousPressed);
+	QObject::connect(ui->moveBtn, &QPushButton::pressed, this, &ClassificationTools::onMovePressed);
+	QObject::connect(ui->undoBtn, &QPushButton::pressed, this, &ClassificationTools::onUndoPressed);
+
+	if (!falsePositiveDir.exists()) {
+		auto path = falsePositiveDir.absolutePath();
+		if (!falsePositiveDir.mkpath(".")) {
+			QString errMsg = QString("Error creating folder %1").arg(path);
+			qDebug() << errMsg;
+			QMessageBox::critical(this, "Create Folder", errMsg, QMessageBox::StandardButton::NoButton, QMessageBox::StandardButton::NoButton);
+		}
+	}
 }
 
 ClassificationTools::~ClassificationTools()
@@ -68,19 +83,29 @@ ClassificationTools::~ClassificationTools()
 	delete ui;
 }
 
-QString workingPath = "/home/mert/Documents/person_filtered/person"; // QDir::homePath()
+#define IS_TEST 1
 
 void ClassificationTools::onClickSelectFolder1()
 {
-	QString dirName = QFileDialog::getExistingDirectory(this, "Open a folder", workingPath);
-	 ui->filePath1->setText(dirName);
+	QString dirName =
+#if !IS_TEST
+		QFileDialog::getExistingDirectory(this, "Open a folder", workingPath);
+#else
+		"/home/mert/Documents/person_filtered/person/no-safety-vest";
+#endif
+	ui->filePath1->setText(dirName);
 	this->folder1InfoList = QDir(dirName).entryInfoList(QDir::Files);
 }
 
 void ClassificationTools::onClickSelectFolder2()
 {
-	QString dirName = QFileDialog::getExistingDirectory(this, "Open a folder", workingPath);
-	 ui->filePath2->setText(dirName);
+	QString dirName =
+#if !IS_TEST
+		QFileDialog::getExistingDirectory(this, "Open a folder", workingPath);
+#else
+		"/home/mert/Documents/person_filtered/person/safety-vest";
+#endif
+	ui->filePath2->setText(dirName);
 	this->folder2InfoList = QDir(dirName).entryInfoList(QDir::Files);
 }
 
@@ -131,10 +156,23 @@ void ClassificationTools::onPreviousPressed() {
 }
 
 void ClassificationTools::onMovePressed() {
-	qDebug() << "move";
+	if (moveTargetDir == nullptr || moveTargetDir.isEmpty()) {
+		qDebug() << "Not selected move target !!!";
+		return;
+	}
+
+	auto it = this->activeFolderInfoList;
+	auto fi = it->at(this->currentIndex);
+	QFile::copy(fi.absoluteFilePath(), falsePositiveDir.absoluteFilePath(fi.fileName()));
+	auto isMove = QFile::rename(fi.absoluteFilePath(), QDir(moveTargetDir).absoluteFilePath(fi.fileName()));
+	if (isMove) {
+		qDebug() << "Moved file name: " << isMove << fi.absoluteFilePath() << " >> " << moveTargetDir;
+
+		it->removeAt(this->currentIndex);
+		onNextPressed();
+	}
 }
 
 void ClassificationTools::onUndoPressed() {
-	qDebug() << "undo";
+	qDebug() << "TODO: undo";
 }
-

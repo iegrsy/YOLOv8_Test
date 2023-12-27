@@ -32,12 +32,16 @@ public slots:
 private:
 	Ui::ClassificationTools *ui;
 
+	QString workingPath = "/home/mert/Documents/person_filtered/person"; // QDir::homePath()
+	QDir falsePositiveDir = QDir::cleanPath(workingPath + QDir::separator() + "false-positive");
+
 	void listImages(QString path);
 
 	int currentIndex = 0;
 	QFileInfoList* activeFolderInfoList = nullptr;
 	QFileInfoList folder1InfoList;
 	QFileInfoList folder2InfoList;
+	QString moveTargetDir;
 };
 
 #endif // CLASSIFICATION_H
