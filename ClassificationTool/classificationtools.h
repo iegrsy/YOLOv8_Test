@@ -28,6 +28,8 @@ public slots:
 	void onClickSelectFolder2();
 	void listFolderPaths1(QString path);
 	void listFolderPaths2(QString path);
+	void saveConfig();
+	void loadConfig();
 
 private:
 	Ui::ClassificationTools *ui;
@@ -36,12 +38,23 @@ private:
 	QDir falsePositiveDir = QDir::cleanPath(workingPath + QDir::separator() + "false-positive");
 
 	void listImages(QString path);
+	void updateFolder1List();
+	void updateFolder2List();
+	void setPreviewImage();
 
+	QFile configFile = QFile("config.json");
 	int currentIndex = 0;
+	QString folder1Path;
+	QString folder2Path;
+
 	QFileInfoList* activeFolderInfoList = nullptr;
 	QFileInfoList folder1InfoList;
 	QFileInfoList folder2InfoList;
+
 	QString moveTargetDir;
+
+protected:
+	void closeEvent(QCloseEvent *event);
 };
 
 #endif // CLASSIFICATION_H

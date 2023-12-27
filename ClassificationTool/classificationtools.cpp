@@ -12,6 +12,8 @@
 #include <QKeySequence>
 #include <QShortcut>
 
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QFile>
 #include <QDir>
 #include <QFileInfo>
@@ -29,16 +31,18 @@ ClassificationTools::ClassificationTools(QWidget *parent)
 	QObject::connect(ui->filePath1, &QLineEdit::textChanged, this, &ClassificationTools::listFolderPaths1);
 	QObject::connect(ui->filePath2, &QLineEdit::textChanged, this, &ClassificationTools::listFolderPaths2);
 	QObject::connect(ui->folder1ActionBtn, &QPushButton::clicked, this, [&](){
-		this->currentIndex = 0;
+		//this->currentIndex = 0;
 		this->activeFolderInfoList = &this->folder1InfoList;
 		this->moveTargetDir = ui->filePath2->text();
+		setPreviewImage();
 		ui->frame_1->setStyleSheet("QFrame#frame_1 {border: 1px solid #0000FF}");
 		ui->frame_2->setStyleSheet("");
 	});
 	QObject::connect(ui->folder2ActionBtn, &QPushButton::clicked, this, [&](){
-		this->currentIndex = 0;
+		//this->currentIndex = 0;
 		this->activeFolderInfoList = &this->folder2InfoList;
 		this->moveTargetDir = ui->filePath1->text();
+		setPreviewImage();
 		ui->frame_1->setStyleSheet("");
 		ui->frame_2->setStyleSheet("QFrame#frame_2 {border: 1px solid #0000FF}");
 	});
@@ -76,6 +80,8 @@ ClassificationTools::ClassificationTools(QWidget *parent)
 			QMessageBox::critical(this, "Create Folder", errMsg, QMessageBox::StandardButton::NoButton, QMessageBox::StandardButton::NoButton);
 		}
 	}
+
+	loadConfig();
 }
 
 ClassificationTools::~ClassificationTools()
@@ -83,44 +89,67 @@ ClassificationTools::~ClassificationTools()
 	delete ui;
 }
 
-#define IS_TEST 1
-
 void ClassificationTools::onClickSelectFolder1()
 {
-	QString dirName =
-#if !IS_TEST
-		QFileDialog::getExistingDirectory(this, "Open a folder", workingPath);
-#else
-		"/home/mert/Documents/person_filtered/person/no-safety-vest";
-#endif
+	QString dirName = QFileDialog::getExistingDirectory(this, "Open a folder", workingPath);
 	ui->filePath1->setText(dirName);
-	this->folder1InfoList = QDir(dirName).entryInfoList(QDir::Files);
 }
 
 void ClassificationTools::onClickSelectFolder2()
 {
-	QString dirName =
-#if !IS_TEST
-		QFileDialog::getExistingDirectory(this, "Open a folder", workingPath);
-#else
-		"/home/mert/Documents/person_filtered/person/safety-vest";
-#endif
+	QString dirName = QFileDialog::getExistingDirectory(this, "Open a folder", workingPath);
 	ui->filePath2->setText(dirName);
-	this->folder2InfoList = QDir(dirName).entryInfoList(QDir::Files);
 }
 
 void ClassificationTools::listFolderPaths1(QString path)
 {
-	listImages(path);
+	this->folder1InfoList = QDir(path).entryInfoList(QDir::Files);
 }
 
 void ClassificationTools::listFolderPaths2(QString path)
 {
-	listImages(path);
+	this->folder2InfoList = QDir(path).entryInfoList(QDir::Files);
 }
 
-void ClassificationTools::listImages(QString path) {
-	qDebug() << path;
+void ClassificationTools::saveConfig()
+{
+	QJsonObject obj
+	{
+		{"currentIndex", this->currentIndex},
+		{"folder1", ui->filePath1->text()},
+		{"folder2", ui->filePath2->text()}
+	};
+
+	QJsonDocument doc;
+	doc.setObject(obj);
+	configFile.open(QIODevice::ReadWrite | QIODevice::Truncate | QIODevice::Text);
+	configFile.write(doc.toJson());
+	configFile.flush();
+	configFile.close();
+
+	qDebug() << "Saved config " << doc.toJson();
+}
+
+void ClassificationTools::loadConfig()
+{
+	configFile.open(QIODevice::OpenModeFlag::ReadOnly);
+	QString config(configFile.readAll());
+	configFile.flush();
+	configFile.close();
+
+	qDebug() << "Load config " << config;
+	QJsonDocument doc = QJsonDocument::fromJson(config.toUtf8());
+	QJsonObject obj = doc.object();
+	this->currentIndex = obj["currentIndex"].toInt();
+	ui->filePath1->setText(obj["folder1"].toString());
+	ui->filePath2->setText(obj["folder2"].toString());
+
+	ui->folder1ActionBtn->click();
+}
+
+void ClassificationTools::closeEvent(QCloseEvent *event)
+{
+	saveConfig();
 }
 
 void ClassificationTools::onNextPressed() {
@@ -131,32 +160,30 @@ void ClassificationTools::onNextPressed() {
 
 	auto it = this->activeFolderInfoList;
 	this->currentIndex++;
-	if (this->currentIndex > it->size() - 1)
+	if (this->currentIndex >= it->size()) {
 		this->currentIndex = it->size() - 1;
-
-	auto fi = it->at(this->currentIndex);
-	qDebug() << "next" << fi.fileName();
-	ui->previewImage->setPixmap(QPixmap(fi.absoluteFilePath()));
-}
-
-void ClassificationTools::onPreviousPressed() {
-	if (this->activeFolderInfoList == nullptr) {
-		qDebug() << "Not set current folder !!!!!!";
+		QMessageBox::information(this, "", "Last image", QMessageBox::StandardButton::NoButton, QMessageBox::StandardButton::NoButton);
 		return;
 	}
 
-	auto it = this->activeFolderInfoList;
-	this->currentIndex--;
-	if (this->currentIndex < 0)
-		this->currentIndex = 0;
+	qDebug() << "next";
+	setPreviewImage();
+}
 
-	auto fi = it->at(this->currentIndex);
-	qDebug() << "pre" << fi.fileName();
-	ui->previewImage->setPixmap(QPixmap(fi.absoluteFilePath()));
+void ClassificationTools::onPreviousPressed() {
+	this->currentIndex--;
+	if (this->currentIndex < 0) {
+		this->currentIndex = 0;
+		QMessageBox::warning(this, "", "First image", QMessageBox::StandardButton::NoButton, QMessageBox::StandardButton::NoButton);
+		return;
+	}
+
+	qDebug() << "pre";
+	setPreviewImage();
 }
 
 void ClassificationTools::onMovePressed() {
-	if (moveTargetDir == nullptr || moveTargetDir.isEmpty()) {
+	if (this->activeFolderInfoList == nullptr || moveTargetDir == nullptr || moveTargetDir.isEmpty()) {
 		qDebug() << "Not selected move target !!!";
 		return;
 	}
@@ -169,8 +196,29 @@ void ClassificationTools::onMovePressed() {
 		qDebug() << "Moved file name: " << isMove << fi.absoluteFilePath() << " >> " << moveTargetDir;
 
 		it->removeAt(this->currentIndex);
+
+		{
+			this->folder1InfoList = QDir(ui->filePath1->text()).entryInfoList(QDir::Files);
+			this->folder2InfoList = QDir(ui->filePath2->text()).entryInfoList(QDir::Files);
+		}
 		onNextPressed();
 	}
+}
+
+void ClassificationTools::setPreviewImage() {
+	if (this->activeFolderInfoList == nullptr)
+		return;
+
+	if (this->activeFolderInfoList->empty()) {
+		QMessageBox::critical(this, "", "Image not found", QMessageBox::StandardButton::NoButton, QMessageBox::StandardButton::NoButton);
+		return;
+	}
+	if (this->currentIndex < 0 || this->activeFolderInfoList->size() <= this->currentIndex)
+		return;
+
+	ui->statusbar->showMessage(QString("%1/%2").arg(this->currentIndex).arg(this->activeFolderInfoList->size()));
+	auto fi = this->activeFolderInfoList->at(this->currentIndex);
+	ui->previewImage->setPixmap(QPixmap(fi.absoluteFilePath()));
 }
 
 void ClassificationTools::onUndoPressed() {
